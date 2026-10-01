@@ -53,6 +53,7 @@ label{font-size:13px;color:var(--mut)}
   <button class="sec" style="margin-top:8px" onclick="openSheet({aic:'',name:'',active:'',exp:'',lot:''})">Inserisci tutto a mano</button>
 </div>
 
+<div id="photoMsg" class="mut" style="margin-bottom:8px"></div>
 <div class="card" id="scanBox" hidden>
   <video id="vid" playsinline muted></video>
   <div class="mut" id="scanMsg" style="margin:8px 0">Tieni il telefono a 10–15 cm, con buona luce, fermo sul codice. Se non legge, usa «Scatta foto».</div>
@@ -162,17 +163,43 @@ function decode(text){
 function hints(){const H=new Map();H.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.CODE_39,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.EAN_13]);H.set(ZXing.DecodeHintType.TRY_HARDER,true);return H}
 function handle(text){const d=decode(text);$('raw').textContent='Codice letto: '+text.replace(/[\x00-\x1f]/g,'|');if(navigator.vibrate)navigator.vibrate(80);const m=meds.get(d.aic);openSheet({aic:d.aic,name:m?m[1]:'',active:m?m[2]:'',exp:d.exp,lot:d.lot},!m)}
 async function startScan(){
-  $('scanBox').hidden=false;
+  $('scanBox').hidden=false;const t0=Date.now();
   try{
     reader=new ZXing.BrowserMultiFormatReader(hints(),150);
-    await reader.decodeFromConstraints({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},advanced:[{focusMode:'continuous'}]}},$('vid'),r=>{if(r){stopScan();handle(r.getText())}});
+    await reader.decodeFromConstraints({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},advanced:[{focusMode:'continuous'}]}},$('vid'),r=>{
+      if(!r)return;const t=r.getText(),d=decode(t);
+      if(meds.size===0||meds.has(d.aic)||Date.now()-t0>10000){stopScan();handle(t)}
+      else $('scanMsg').textContent='Letto «'+t.slice(0,24)+'» ma non è nell’elenco: continuo a cercare…';
+    });
   }catch(e){$('scanMsg').textContent='Fotocamera non disponibile: consenti l’accesso in Safari.'}
 }
+function loadImg(f){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(f)})}
+async function decodePhoto(f){
+  const im=await loadImg(f),W=im.naturalWidth,H=im.naturalHeight,rd=new ZXing.BrowserMultiFormatReader(hints()),all=[];
+  for(const g of [1,2,3]){
+    const tw=g>1?W/g*1.4:W,th=g>1?H/g*1.4:H;
+    for(let r=0;r<g;r++)for(let c=0;c<g;c++){
+      const x=g>1?(W-tw)*c/(g-1):0,y=g>1?(H-th)*r/(g-1):0,sc=Math.min(2,1600/Math.max(tw,th));
+      const cv=document.createElement('canvas');cv.width=Math.round(tw*sc);cv.height=Math.round(th*sc);
+      cv.getContext('2d').drawImage(im,x,y,tw,th,0,0,cv.width,cv.height);
+      $('photoMsg').textContent='Analizzo la foto… '+all.length+' codici letti';
+      try{const t=(await rd.decodeFromImageUrl(cv.toDataURL('image/jpeg',.92))).getText();
+        if(!all.includes(t))all.push(t);
+        if(meds.has(decode(t).aic))return{text:t,all}}catch(e){}
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+  return{text:all[0]||null,all};
+}
 $('photoIn').onchange=async e=>{
-  const f=e.target.files[0];if(!f)return;
-  try{const r=await new ZXing.BrowserMultiFormatReader(hints()).decodeFromImageUrl(URL.createObjectURL(f));handle(r.getText())}
-  catch(err){alert('Codice non letto dalla foto. Avvicinati al bollino o al DataMatrix, con luce e messa a fuoco buone.')}
-  e.target.value='';
+  const f=e.target.files[0];if(!f)return;e.target.value='';
+  $('photoMsg').textContent='Analizzo la foto…';
+  try{
+    const r=await decodePhoto(f);
+    if(!r.text){$('photoMsg').textContent='Nessun codice leggibile nella foto. Avvicinati di più al bollino, con luce e messa a fuoco buone.';return}
+    $('photoMsg').textContent='';handle(r.text);
+    if(r.all.length>1)$('raw').textContent='Codici letti: '+r.all.map(x=>x.replace(/[\x00-\x1f]/g,'|')).join('  ·  ');
+  }catch(err){$('photoMsg').textContent='Errore nella lettura della foto.'}
 };
 function byAic(){const v=$('aicIn').value.replace(/\D/g,'');if(!v)return;const a=v.padStart(9,'0');const m=meds.get(a);openSheet({aic:a,name:m?m[1]:'',active:m?m[2]:'',exp:'',lot:''},!m)}
 function stopScan(){try{reader&&reader.reset()}catch(e){}$('scanBox').hidden=true}
