@@ -70,6 +70,7 @@ label{font-size:13px;color:var(--mut)}
 <div class="modal" id="modal">
   <div class="sheet">
     <h2 style="margin:0 0 8px;font-size:18px">Dettagli medicinale</h2>
+    <div id="raw" class="mut" style="word-break:break-all"></div>
     <div id="notFound" class="mut" style="color:var(--bad);display:none">Codice non trovato nell'elenco: inserisci i dati a mano.</div>
     <label>Nome</label><input id="fName">
     <label>Principio attivo</label><input id="fAct">
@@ -131,24 +132,35 @@ function dbStatus(){$('dbStatus').textContent=meds.size?`Elenco AIFA caricato: $
 // ---- parsing codici ----
 function parseGS1(t){
   t=t.replace(/[()]/g,'');const GS='\x1d';let i=0,o={};
-  const fixed={'01':14,'17':6,'11':6,'15':6},vari=['10','21'];
-  while(i<t.length){const ai=t.substr(i,2);i+=2;
+  const fixed={'01':14,'17':6,'11':6,'15':6},vari=['10','21','714'];
+  while(i<t.length){
+    let ai=t.substr(i,2);if(t.substr(i,3)==='714'){ai='714';i+=3}else i+=2;
     if(fixed[ai]){o[ai]=t.substr(i,fixed[ai]);i+=fixed[ai]}
     else if(vari.includes(ai)){let e=t.indexOf(GS,i);if(e<0)e=t.length;o[ai]=t.slice(i,e);i=e+1}
     else if(t[i-2]===GS)i-=1;else break}
   return o;
 }
+const B32='0123456789BCDFGHJKLMNPQRSTUVWXYZ';
+function fromB32(s){let n=0;for(const c of s){const v=B32.indexOf(c);if(v<0)return null;n=n*32+v}return n}
 function decode(text){
-  let aic='',exp='',lot='';
-  const g=parseGS1(text);
-  if(g['01']){const x=g['01'];aic=x.startsWith('080')?x.substr(3,9):x.slice(-10,-1);lot=g['10']||'';
-    const e=g['17'];if(e&&e.length==6)exp=`20${e.substr(0,2)}-${e.substr(2,2)}`}
-  else{const m=text.match(/^A?(\d{9})\d?$/i);aic=m?m[1]:text.replace(/\D/g,'').slice(0,9)}
+  text=text.trim();let exp='',lot='',c=[];
+  const g=parseGS1(text),gt=g['01']&&g['01'].length==14;
+  if(gt||g['714']){
+    if(g['714'])c.push(g['714'].replace(/\D/g,'').slice(-9));
+    if(gt){const x=g['01'];for(let i=0;i+9<=x.length;i++)c.push(x.substr(i,9))}
+    lot=g['10']||'';const e=g['17'];if(e&&e.length==6)exp=`20${e.substr(0,2)}-${e.substr(2,2)}`;
+  }else{
+    const u=text.toUpperCase();
+    if(/^[0-9BCDFGHJKLMNPQRSTUVWXYZ]{6}$/.test(u)){const n=fromB32(u);if(n!==null)c.push(String(n).padStart(9,'0'))}
+    const d=u.replace(/\D/g,'');
+    if(d.length==9)c.push(d);else for(let i=0;i+9<=d.length;i++)c.push(d.substr(i,9));
+  }
+  const aic=c.find(a=>meds.has(a))||c[0]||'';
   return{aic,exp,lot};
 }
 // ---- scanner ----
 function hints(){const H=new Map();H.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.CODE_39,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.EAN_13]);H.set(ZXing.DecodeHintType.TRY_HARDER,true);return H}
-function handle(text){const d=decode(text);if(navigator.vibrate)navigator.vibrate(80);const m=meds.get(d.aic);openSheet({aic:d.aic,name:m?m[1]:'',active:m?m[2]:'',exp:d.exp,lot:d.lot},!m)}
+function handle(text){const d=decode(text);$('raw').textContent='Codice letto: '+text.replace(/[\x00-\x1f]/g,'|');if(navigator.vibrate)navigator.vibrate(80);const m=meds.get(d.aic);openSheet({aic:d.aic,name:m?m[1]:'',active:m?m[2]:'',exp:d.exp,lot:d.lot},!m)}
 async function startScan(){
   $('scanBox').hidden=false;
   try{
