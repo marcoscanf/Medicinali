@@ -44,12 +44,18 @@ label{font-size:13px;color:var(--mut)}
 
 <div class="row">
   <button onclick="startScan()">📷 Scansiona</button>
-  <button class="sec" onclick="openSheet({aic:'',name:'',active:'',exp:'',lot:''})">Inserisci a mano</button>
+  <button class="sec" onclick="photoIn.click()">🖼️ Scatta foto</button>
+  <input type="file" id="photoIn" accept="image/*" capture="environment" hidden>
+</div>
+<div class="card">
+  <label>Oppure cerca per codice AIC (9 cifre sulla scatola)</label>
+  <div class="row" style="margin:4px 0 0"><input id="aicIn" inputmode="numeric" placeholder="es. 012345678" style="margin:0;flex:1"><button onclick="byAic()">Cerca</button></div>
+  <button class="sec" style="margin-top:8px" onclick="openSheet({aic:'',name:'',active:'',exp:'',lot:''})">Inserisci tutto a mano</button>
 </div>
 
 <div class="card" id="scanBox" hidden>
   <video id="vid" playsinline muted></video>
-  <div class="mut" id="scanMsg" style="margin:8px 0">Inquadra il codice a barre o il DataMatrix…</div>
+  <div class="mut" id="scanMsg" style="margin:8px 0">Tieni il telefono a 10–15 cm, con buona luce, fermo sul codice. Se non legge, usa «Scatta foto».</div>
   <button class="sec" onclick="stopScan()">Chiudi fotocamera</button>
 </div>
 
@@ -141,17 +147,22 @@ function decode(text){
   return{aic,exp,lot};
 }
 // ---- scanner ----
+function hints(){const H=new Map();H.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.CODE_39,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.EAN_13]);H.set(ZXing.DecodeHintType.TRY_HARDER,true);return H}
+function handle(text){const d=decode(text);if(navigator.vibrate)navigator.vibrate(80);const m=meds.get(d.aic);openSheet({aic:d.aic,name:m?m[1]:'',active:m?m[2]:'',exp:d.exp,lot:d.lot},!m)}
 async function startScan(){
   $('scanBox').hidden=false;
   try{
-    const H=new Map();H.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.CODE_39,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.EAN_13]);
-    reader=new ZXing.BrowserMultiFormatReader(H);
-    await reader.decodeFromConstraints({video:{facingMode:'environment'}},$('vid'),(r)=>{
-      if(r){const d=decode(r.getText());stopScan();if(navigator.vibrate)navigator.vibrate(80);
-        const m=meds.get(d.aic);openSheet({aic:d.aic,name:m?m[1]:'',active:m?m[2]:'',exp:d.exp,lot:d.lot},!m)}
-    });
+    reader=new ZXing.BrowserMultiFormatReader(hints(),150);
+    await reader.decodeFromConstraints({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},advanced:[{focusMode:'continuous'}]}},$('vid'),r=>{if(r){stopScan();handle(r.getText())}});
   }catch(e){$('scanMsg').textContent='Fotocamera non disponibile: consenti l’accesso in Safari.'}
 }
+$('photoIn').onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{const r=await new ZXing.BrowserMultiFormatReader(hints()).decodeFromImageUrl(URL.createObjectURL(f));handle(r.getText())}
+  catch(err){alert('Codice non letto dalla foto. Avvicinati al bollino o al DataMatrix, con luce e messa a fuoco buone.')}
+  e.target.value='';
+};
+function byAic(){const v=$('aicIn').value.replace(/\D/g,'');if(!v)return;const a=v.padStart(9,'0');const m=meds.get(a);openSheet({aic:a,name:m?m[1]:'',active:m?m[2]:'',exp:'',lot:''},!m)}
 function stopScan(){try{reader&&reader.reset()}catch(e){}$('scanBox').hidden=true}
 // ---- finestra e tabella ----
 function openSheet(d,nf){cur=d;$('fName').value=d.name;$('fAct').value=d.active;$('fExp').value=d.exp;$('notFound').style.display=nf?'block':'none';$('modal').classList.add('on')}
