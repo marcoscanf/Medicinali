@@ -43,8 +43,7 @@ label{font-size:13px;color:var(--mut)}
 </div>
 
 <div class="row">
-  <button onclick="startScan()">📷 Scansiona</button>
-  <button class="sec" onclick="photoIn.click()">🖼️ Scatta foto</button>
+  <button onclick="photoIn.click()">📷 Scatta foto</button>
   <input type="file" id="photoIn" accept="image/*" capture="environment" hidden>
 </div>
 <div class="card">
@@ -54,13 +53,8 @@ label{font-size:13px;color:var(--mut)}
 </div>
 
 <div id="photoMsg" class="mut" style="margin-bottom:8px"></div>
-<div class="card" id="scanBox" hidden>
-  <video id="vid" playsinline muted></video>
-  <div class="mut" id="scanMsg" style="margin:8px 0">Tieni il telefono a 10–15 cm, con buona luce, fermo sul codice. Se non legge, usa «Scatta foto».</div>
-  <button class="sec" onclick="stopScan()">Chiudi fotocamera</button>
-</div>
-
 <div class="card wrap">
+  <input id="q" type="search" placeholder="Cerca nell'elenco per nome o principio attivo…" oninput="render()" style="margin-top:0">
   <table>
     <thead><tr><th>Nome</th><th>Principio attivo</th><th>Scadenza</th><th></th></tr></thead>
     <tbody id="rows"></tbody>
@@ -115,12 +109,14 @@ function parseCsv(t){
   const H=splitLine(h,d).map(x=>x.trim().toLowerCase());
   const ia=H.findIndex(x=>/aic/.test(x));
   let inm=H.findIndex(x=>/denominaz/.test(x));if(inm<0)inm=H.findIndex(x=>/nome|medicinale|confezione/.test(x));
-  const ip=H.findIndex(x=>/principio|attivo/.test(x));
+  const ip=H.findIndex(x=>/princip|attiv|sostanz/.test(x));
   if(ia<0||inm<0)return null;
-  const out=[];
+  const out=new Map();
   for(let i=1;i<lines.length;i++){const c=splitLine(lines[i],d);const a=(c[ia]||'').replace(/\D/g,'');if(!a)continue;
-    out.push([a.padStart(9,'0'),(c[inm]||'').trim(),ip>=0?(c[ip]||'').trim():''])}
-  return out;
+    const k=a.padStart(9,'0'),nm=(c[inm]||'').trim(),pa=ip>=0?(c[ip]||'').trim():'',o=out.get(k);
+    if(!o)out.set(k,[k,nm,pa]);
+    else if(pa&&!o[2].split(', ').includes(pa))o[2]=o[2]?o[2]+', '+pa:pa}
+  return [...out.values()];
 }
 $('csvIn').onchange=async e=>{
   const f=e.target.files[0];if(!f)return;
@@ -129,7 +125,7 @@ $('csvIn').onchange=async e=>{
   if(!rows||!rows.length){$('dbStatus').textContent='CSV non riconosciuto: servono colonne con AIC e denominazione.';return}
   try{await storeMeds(rows);meds=new Map(rows.map(r=>[r[0],r]));dbStatus()}catch(e){$('dbStatus').textContent='Salvataggio non riuscito ('+(e.code||e.message)+'). Riprova.'}
 };
-function dbStatus(){$('dbStatus').textContent=meds.size?`Elenco AIFA caricato: ${meds.size.toLocaleString('it')} confezioni, ${D?'salvato online':'salvato solo su questo telefono'}.`:'Nessun elenco AIFA: importa il CSV open data per il riconoscimento automatico.'}
+function dbStatus(){const na=[...meds.values()].filter(x=>x[2]).length;$('dbStatus').textContent=meds.size?`Elenco AIFA caricato: ${meds.size.toLocaleString('it')} confezioni, ${D?'salvato online':'salvato solo su questo telefono'}.${na?'':' Attenzione: nel CSV non ho trovato il principio attivo.'}`:'Nessun elenco AIFA: importa il CSV open data per il riconoscimento automatico.'}
 // ---- parsing codici ----
 function parseGS1(t){
   t=t.replace(/[()]/g,'');const GS='\x1d';let i=0,o={};
@@ -162,17 +158,6 @@ function decode(text){
 // ---- scanner ----
 function hints(){const H=new Map();H.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.CODE_39,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.DATA_MATRIX,ZXing.BarcodeFormat.EAN_13]);H.set(ZXing.DecodeHintType.TRY_HARDER,true);return H}
 function handle(text){const d=decode(text);$('raw').textContent='Codice letto: '+text.replace(/[\x00-\x1f]/g,'|');if(navigator.vibrate)navigator.vibrate(80);const m=meds.get(d.aic);openSheet({aic:d.aic,name:m?m[1]:'',active:m?m[2]:'',exp:d.exp,lot:d.lot},!m)}
-async function startScan(){
-  $('scanBox').hidden=false;const t0=Date.now();
-  try{
-    reader=new ZXing.BrowserMultiFormatReader(hints(),150);
-    await reader.decodeFromConstraints({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080},advanced:[{focusMode:'continuous'}]}},$('vid'),r=>{
-      if(!r)return;const t=r.getText(),d=decode(t);
-      if(meds.size===0||meds.has(d.aic)||Date.now()-t0>10000){stopScan();handle(t)}
-      else $('scanMsg').textContent='Letto «'+t.slice(0,24)+'» ma non è nell’elenco: continuo a cercare…';
-    });
-  }catch(e){$('scanMsg').textContent='Fotocamera non disponibile: consenti l’accesso in Safari.'}
-}
 function loadImg(f){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(f)})}
 async function decodePhoto(f){
   const im=await loadImg(f),W=im.naturalWidth,H=im.naturalHeight,rd=new ZXing.BrowserMultiFormatReader(hints()),all=[];
@@ -202,7 +187,6 @@ $('photoIn').onchange=async e=>{
   }catch(err){$('photoMsg').textContent='Errore nella lettura della foto.'}
 };
 function byAic(){const v=$('aicIn').value.replace(/\D/g,'');if(!v)return;const a=v.padStart(9,'0');const m=meds.get(a);openSheet({aic:a,name:m?m[1]:'',active:m?m[2]:'',exp:'',lot:''},!m)}
-function stopScan(){try{reader&&reader.reset()}catch(e){}$('scanBox').hidden=true}
 // ---- finestra e tabella ----
 function openSheet(d,nf){cur=d;$('fName').value=d.name;$('fAct').value=d.active;$('fExp').value=d.exp;$('notFound').style.display=nf?'block':'none';$('modal').classList.add('on')}
 function closeSheet(){$('modal').classList.remove('on')}
@@ -221,8 +205,11 @@ function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','
 function render(){
   items.sort((a,b)=>a.exp.localeCompare(b.exp));
   const now=new Date().toISOString().slice(0,7);
-  $('empty').hidden=items.length>0;
-  $('rows').innerHTML=items.map(x=>{const [y,m]=x.exp.split('-');
+  const q=($('q').value||'').trim().toLowerCase();
+  const vis=q?items.filter(x=>(x.name+' '+x.active).toLowerCase().includes(q)):items;
+  $('empty').hidden=vis.length>0;
+  $('empty').textContent=items.length?'Nessun risultato.':'Nessun medicinale ancora.';
+  $('rows').innerHTML=vis.map(x=>{const [y,m]=x.exp.split('-');
     return`<tr><td>${esc(x.name)}</td><td>${esc(x.active)||'—'}</td><td class="exp ${x.exp<now?'late':''}">${m}/${y}</td><td><button class="sec" style="padding:4px 9px" onclick="del(${x.id})">✕</button></td></tr>`}).join('');
 }
 (async()=>{
